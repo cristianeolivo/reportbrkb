@@ -99,11 +99,11 @@ with col3:
 @st.cache_data
 def carregar_bases():
 
-    verificar_arquivo("Entradas_Analise.xlsx")
+    verificar_arquivo("ENTRADAS_ANALISE.xlsx")
     verificar_arquivo("SETTLED.xlsx")
     verificar_arquivo("relatorio_tratado.xlsx")
 
-    entradas = pd.read_excel("Entradas_Analise.xlsx")
+    entradas = pd.read_excel("ENTRADAS_ANALISE.xlsx")
     settled = pd.read_excel("SETTLED.xlsx")
     relatorio = pd.read_excel("relatorio_tratado.xlsx")
 
