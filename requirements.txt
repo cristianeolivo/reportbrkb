@@ -4,3 +4,4 @@ plotly
 numpy
 Pillow
 openpyxl
+streamlit-authenticator
