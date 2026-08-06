@@ -39,8 +39,8 @@ st.markdown("""
 # =========================
 credentials = {
     "usernames": {
-        "JuridicoErbe": {
-            "name": "JuridicoErbe",
+        "ControladoriaErbe": {
+            "name": "ControladoriaErbe",
             "password": "Erbe@3009"
         }
     }
@@ -224,111 +224,52 @@ elif authentication_status:
     # =========================
     # PROCESSAMENTO DA TABELA
     # =========================
+
     def gerar_tabela_desembolso():
-        base_app = os.path.dirname(os.path.abspath(__file__)) if "__file__" in globals() else os.getcwd()
-        arquivo = os.path.join(base_app, "SETTLED_MENSAL.xlsx")
-        aba_preferencial = "SETTLED_MENSAL"
-
-        col_macro = "Macro encerramento"
-        col_fcx = "Soma_Valor_Lancamento"
-        col_bp = "Valor Pedido Objeto Corrigido"
-
-        colunas_obrigatorias = [col_macro, col_fcx, col_bp]
-
-        mapeamento = {
-            "Won": "Casos ganhos",
-            "Settled": "Acordos",
-            "Lost": "Perdidos"
-        }
-
-        ordem_macro = ["Won", "Settled", "Lost"]
-
+        # 1. Carregar os dados
         try:
-            excel = pd.ExcelFile(arquivo)
+            df_set = pd.read_excel("SETTLED_MENSAL.xlsx")
         except FileNotFoundError:
             st.error("Arquivo SETTLED_MENSAL.xlsx não encontrado.")
             return
-        except Exception as e:
-            st.error(f"Erro ao abrir SETTLED_MENSAL.xlsx: {e}")
-            return
 
-        if aba_preferencial in excel.sheet_names:
-            aba_usada = aba_preferencial
-        elif len(excel.sheet_names) == 1:
-            aba_usada = excel.sheet_names[0]
-        else:
-            st.error(
-                "Aba 'SETTLED_MENSAL' não encontrada em SETTLED_MENSAL.xlsx. "
-                f"Abas disponíveis: {', '.join(excel.sheet_names)}"
-            )
-            return
+        # 2. Agrupamento e Cálculos Base
+        # Settled = Acordos, Won = Casos ganhos, Lost = Perdidos
+        # Mapeamento para os nomes da imagem
+        mapeamento = {
+            "Won": "Casos ganhos*",
+            "Settled": "Acordos**",
+            "Lost": "Perdidos"
+        }
 
-        try:
-            df_set = pd.read_excel(excel, sheet_name=aba_usada)
-            df_set.columns = df_set.columns.astype(str).str.strip()
-        except Exception as e:
-            st.error(f"Erro ao ler a aba '{aba_usada}': {e}")
-            return
+        # Agrupar e somar
+        resumo = df_set.groupby("Macro encerramento").agg({
+            "Soma_Valor_Lancamento": "sum",       # BP Atualizado
+            "Valor Pedido Objeto Corrigido": "sum" # Fcx Real
+        }).reset_index()
 
-        colunas_ausentes = [col for col in colunas_obrigatorias if col not in df_set.columns]
+        # Aplicar o mapeamento de nomes
+        resumo["Baixa provisória e encerrados"] = resumo["Macro encerramento"].map(mapeamento)
+        
+        # Contagem de casos (Coluna da esquerda na imagem)
+        contagem = df_set.groupby("Macro encerramento").size().reset_index(name="qtd")
+        resumo = resumo.merge(contagem, on="Macro encerramento")
 
-        if colunas_ausentes:
-            st.error(
-                "Coluna(s) obrigatória(s) ausente(s) em SETTLED_MENSAL.xlsx: "
-                + ", ".join(colunas_ausentes)
-            )
-            return
+        # 3. Formatação dos valores (dividir por 1 milhão e 1 casa decimal)
+        resumo["Fcx Real"] = (resumo["Soma_Valor_Lancamento"] / 1000000)
+        resumo["BP atualizado"] = (resumo["Valor Pedido Objeto Corrigido"] / 1000000)
 
-        df_set[col_macro] = df_set[col_macro].fillna("").astype(str).str.strip()
-        df_set[col_fcx] = pd.to_numeric(df_set[col_fcx], errors="coerce").fillna(0)
-        df_set[col_bp] = pd.to_numeric(df_set[col_bp], errors="coerce").fillna(0)
-
-        diagnostico = (
-            df_set.groupby(col_macro, dropna=False)
-            .agg(
-                qtd=(col_macro, "size"),
-                soma_bruta_bp_atualizado=(col_bp, "sum"),
-                soma_bruta_fcx_real=(col_fcx, "sum")
-            )
-            .reset_index()
-        )
-
-        with st.expander("Diagnóstico temporário - Desembolso e Fluxo de Caixa", expanded=False):
-            st.write(f"Arquivo utilizado: {arquivo}")
-            st.write(f"Aba utilizada: {aba_usada}")
-            st.write(f"Abas disponíveis no arquivo: {', '.join(excel.sheet_names)}")
-            st.write(f"BP atualizado vem da coluna: {col_bp}")
-            st.write(f"Fcx Real vem da coluna: {col_fcx}")
-            st.dataframe(diagnostico, hide_index=True, use_container_width=True)
-
-        df_tabela = df_set[df_set[col_macro].isin(ordem_macro)].copy()
-
-        resumo = (
-            df_tabela.groupby(col_macro)
-            .agg(
-                qtd=(col_macro, "size"),
-                bp_bruto=(col_bp, "sum"),
-                fcx_bruto=(col_fcx, "sum")
-            )
-            .reindex(ordem_macro, fill_value=0)
-            .reset_index()
-        )
-
-        resumo["Baixa provisória e encerrados"] = resumo[col_macro].map(mapeamento)
-
-        resumo["BP atualizado"] = resumo["bp_bruto"] / 1_000_000
-        resumo["Fcx Real"] = resumo["fcx_bruto"] / 1_000_000
-
+        # 4. Cálculos de Delta e %
         resumo["Δ"] = resumo["BP atualizado"] - resumo["Fcx Real"]
-        resumo["%"] = resumo.apply(
-            lambda row: (row["Δ"] / row["BP atualizado"]) * 100 if row["BP atualizado"] != 0 else 0,
-            axis=1
-        )
+        resumo["%"] = (resumo["Δ"] / resumo["BP atualizado"]) * 100
 
-        resumo = resumo[
-            ["qtd", "Baixa provisória e encerrados", "BP atualizado", "Fcx Real", "Δ", "%"]
-        ]
+        # 5. Organizar as colunas e ordenar conforme a imagem
+        # Ordem desejada: Casos Ganhos, Acordos, Perdidos
+        ordem = ["Casos ganhos*", "Acordos**", "Perdidos"]
+        resumo["ordem_aux"] = resumo["Baixa provisória e encerrados"].map({v: i for i, v in enumerate(ordem)})
+        resumo = resumo.sort_values("ordem_aux").drop(columns=["Macro encerramento", "Soma_Valor_Lancamento", "Valor Pedido Objeto Corrigido", "ordem_aux"])
 
+        # 6. Linha de Total
         total_qtd = resumo["qtd"].sum()
         total_bp = resumo["BP atualizado"].sum()
         total_fcx = resumo["Fcx Real"].sum()
@@ -346,28 +287,42 @@ elif authentication_status:
 
         tabela_final = pd.concat([resumo, linha_total], ignore_index=True)
 
+        # =========================
+        # EXIBIÇÃO NO STREAMLIT
+        # =========================
+
         st.markdown("### Desembolso e Fluxo de Caixa")
 
+        # Formatação final para exibição
         df_display = tabela_final.copy()
 
+        # Formata as colunas numéricas para 1 casa decimal e o % com símbolo
+        # Adicionei o .str.replace(".", ",") para garantir o formato brasileiro (opcional)
         for col in ["BP atualizado", "Fcx Real", "Δ"]:
-            df_display[col] = df_display[col].map(lambda x: f"{x:.1f}".replace(".", ","))
+            df_display[col] = df_display[col].map("{:.1f}".format).str.replace(".", ",")
 
-        df_display["%"] = df_display["%"].map(lambda x: f"{x:.0f}%")
+        df_display["%"] = df_display["%"].map("{:.0f}%".format)
 
+        # Renomeia as colunas para o display
         colunas_novas = ["", "Baixa provisória e encerrados", "BP atualizado", "Fcx Real", "Δ", "%"]
         df_display.columns = colunas_novas
 
+        # ==========================================
+        # Exibe a tabela centralizada e sem índice
+        # ==========================================
         st.dataframe(
             df_display,
-            hide_index=True,
-            use_container_width=True,
+            hide_index=True,          # Esconde o índice (equivalente ao que o st.table fazia)
+            use_container_width=True, # Ocupa toda a tela
             column_config={
+                # Esse truque aplica o alinhamento 'center' para todas as colunas da lista
                 col: st.column_config.Column(alignment="center") for col in colunas_novas
             }
         )
 
+    # Chamar a função dentro do bloco 'Resolved' do seu app
     gerar_tabela_desembolso()
+
     # ===============================
     # GRÁFICO 1
     # ===============================
@@ -538,12 +493,11 @@ elif authentication_status:
 
     
     historico_manual = {
-        1: {"entradas": 32, "encerrados": 82},
-        2: {"entradas": 49, "encerrados": 149},
-        3: {"entradas": 45, "encerrados": 68},
-        4: {"entradas": 13, "encerrados": 115},
-        5: {"entradas": 22, "encerrados": 59},
-
+        1: {"entradas": 150, "encerrados": 120},
+        2: {"entradas": 130, "encerrados": 140},
+        3: {"entradas": 160, "encerrados": 110},
+        4: {"entradas": 145, "encerrados": 135},
+        # 5: {"entradas": X, "encerrados": Y}, 
     }
 
     

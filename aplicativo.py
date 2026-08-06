@@ -40,8 +40,8 @@ st.markdown("""
 
 credentials = {
     "usernames": {
-        "JuridicoErbe": {
-            "name": "JuridicoErbe",
+        "ControladoriaErbe": {
+            "name": "ControladoriaErbe",
             "password": "Erbe@3009"
         }
     }
@@ -293,7 +293,7 @@ elif authentication_status:
             st.table(pd.DataFrame({
                 "Subject":["Civil","Tax","Labor","Construction"],
                 "Rate":["TJ+1%","Selic","TST+1%","INCC"],
-                "Last 12 months":["16.72%","14.5%","16.72%","6.71%"]
+                "12M":["16.8%","14.5%","16.8%","5.8%"]
             }))
 
     # =========================
@@ -394,7 +394,7 @@ elif authentication_status:
         # --- CÁLCULOS DO GRÁFICO SUPERIOR ---
         acumulado_new_claims = df_bp["Valor Pedido.1"].sum()
         acumulado_new_claims = (acumulado_new_claims/1000000).round(2)
-        values_top = [54.4, 7.4, acumulado_new_claims] 
+        values_top = [54.4, 9.2, acumulado_new_claims] 
 
         fig_top = go.Figure()
         fig_top.add_trace(go.Bar(
@@ -417,7 +417,7 @@ elif authentication_status:
         df_bp["Macro Assunto"] = df_bp["Macro Assunto"].fillna("Demais").astype(str).str.strip()
         df_bp["Macro Assunto"] = df_bp["Macro Assunto"].replace(["", "nan", "None"], "Demais")
 
-        tipos_base = ["Cível", "Property Tax", "Labor", "Delay", "FAR", "Construction", "Tax"]
+        tipos_base = ["Cível", "Property Tax", "Labor", "Delay", "FAR", "Construction", "Tax", "Demais"]
         
         # Realiza os agrupamentos
         total_risk = df_bp.groupby("Macro Assunto")["Valor Pedido Atualizado"].sum() / 1000000
