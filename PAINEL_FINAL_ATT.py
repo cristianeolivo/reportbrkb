@@ -39,16 +39,16 @@ st.markdown("""
 # =========================
 credentials = {
     "usernames": {
-        "equipe": {
-            "name": "Equipe",
-            "password": "123456"
+        "JuridicoErbe": {
+            "name": "JuridicoErbe",
+            "password": "Erbe@3009"
         }
     }
 }
 
 authenticator = stauth.Authenticate(
     credentials,
-    "meu_app",
+    "meu_appv3",
     "abc123",
     cookie_expiry_days=1
 )
@@ -192,7 +192,6 @@ elif authentication_status:
     # ===============================
     # CÁLCULOS (Mantenha estes)
     # ===============================
-    # ... (Seu código de ativos, entradas_mes, baixa_mes, encerrados_mes e intersecao)
 
     # Função de formatação segura
     def fmt_saida(valor):
@@ -211,7 +210,7 @@ elif authentication_status:
     dados = [
         ["Ativos", int(ativos_mes_anterior), int(entradas_mes), fmt_saida(baixa_mes), fmt_saida(encerrados_mes), int(ativos)],
         ["Baixa Provisória", "", "", int(baixa_mes), fmt_saida(intersecao), int(baixa_mes - intersecao)],
-        ["Encerrados", "", "", int(intersecao), int(encerrados_mes), int(intersecao + encerrados_mes)] # Exemplo dinâmico
+        ["Encerrados", "", "", int(intersecao), int(encerrados_mes), int(intersecao + encerrados_mes)] 
     ]
 
     tabela = pd.DataFrame(dados, columns=["", "Mês anterior", "Novos", "Baixa provisória", "Encerrados", "Mês atual"])
@@ -225,52 +224,111 @@ elif authentication_status:
     # =========================
     # PROCESSAMENTO DA TABELA
     # =========================
-
     def gerar_tabela_desembolso():
-        # 1. Carregar os dados
-        try:
-            df_set = pd.read_excel("SETTLED_MENSAL.xlsx")
-        except FileNotFoundError:
-            st.error("Arquivo SETTLED_MENSAL.xlsx não encontrado.")
-            return
+        base_app = os.path.dirname(os.path.abspath(__file__)) if "__file__" in globals() else os.getcwd()
+        arquivo = os.path.join(base_app, "SETTLED_MENSAL.xlsx")
+        aba_preferencial = "SETTLED_MENSAL"
 
-        # 2. Agrupamento e Cálculos Base
-        # Settled = Acordos, Won = Casos ganhos, Lost = Perdidos
-        # Mapeamento para os nomes da imagem
+        col_macro = "Macro encerramento"
+        col_fcx = "Soma_Valor_Lancamento"
+        col_bp = "Valor Pedido Objeto Corrigido"
+
+        colunas_obrigatorias = [col_macro, col_fcx, col_bp]
+
         mapeamento = {
-            "Won": "Casos ganhos*",
-            "Settled": "Acordos**",
+            "Won": "Casos ganhos",
+            "Settled": "Acordos",
             "Lost": "Perdidos"
         }
 
-        # Agrupar e somar
-        resumo = df_set.groupby("Macro encerramento").agg({
-            "Soma_Valor_Lancamento": "sum",       # BP Atualizado
-            "Valor Pedido Objeto Corrigido": "sum" # Fcx Real
-        }).reset_index()
+        ordem_macro = ["Won", "Settled", "Lost"]
 
-        # Aplicar o mapeamento de nomes
-        resumo["Baixa provisória e encerrados"] = resumo["Macro encerramento"].map(mapeamento)
-        
-        # Contagem de casos (Coluna da esquerda na imagem)
-        contagem = df_set.groupby("Macro encerramento").size().reset_index(name="qtd")
-        resumo = resumo.merge(contagem, on="Macro encerramento")
+        try:
+            excel = pd.ExcelFile(arquivo)
+        except FileNotFoundError:
+            st.error("Arquivo SETTLED_MENSAL.xlsx não encontrado.")
+            return
+        except Exception as e:
+            st.error(f"Erro ao abrir SETTLED_MENSAL.xlsx: {e}")
+            return
 
-        # 3. Formatação dos valores (dividir por 1 milhão e 1 casa decimal)
-        resumo["BP atualizado"] = (resumo["Soma_Valor_Lancamento"] / 1000000)
-        resumo["Fcx Real"] = (resumo["Valor Pedido Objeto Corrigido"] / 1000000)
+        if aba_preferencial in excel.sheet_names:
+            aba_usada = aba_preferencial
+        elif len(excel.sheet_names) == 1:
+            aba_usada = excel.sheet_names[0]
+        else:
+            st.error(
+                "Aba 'SETTLED_MENSAL' não encontrada em SETTLED_MENSAL.xlsx. "
+                f"Abas disponíveis: {', '.join(excel.sheet_names)}"
+            )
+            return
 
-        # 4. Cálculos de Delta e %
+        try:
+            df_set = pd.read_excel(excel, sheet_name=aba_usada)
+            df_set.columns = df_set.columns.astype(str).str.strip()
+        except Exception as e:
+            st.error(f"Erro ao ler a aba '{aba_usada}': {e}")
+            return
+
+        colunas_ausentes = [col for col in colunas_obrigatorias if col not in df_set.columns]
+
+        if colunas_ausentes:
+            st.error(
+                "Coluna(s) obrigatória(s) ausente(s) em SETTLED_MENSAL.xlsx: "
+                + ", ".join(colunas_ausentes)
+            )
+            return
+
+        df_set[col_macro] = df_set[col_macro].fillna("").astype(str).str.strip()
+        df_set[col_fcx] = pd.to_numeric(df_set[col_fcx], errors="coerce").fillna(0)
+        df_set[col_bp] = pd.to_numeric(df_set[col_bp], errors="coerce").fillna(0)
+
+        diagnostico = (
+            df_set.groupby(col_macro, dropna=False)
+            .agg(
+                qtd=(col_macro, "size"),
+                soma_bruta_bp_atualizado=(col_bp, "sum"),
+                soma_bruta_fcx_real=(col_fcx, "sum")
+            )
+            .reset_index()
+        )
+
+        with st.expander("Diagnóstico temporário - Desembolso e Fluxo de Caixa", expanded=False):
+            st.write(f"Arquivo utilizado: {arquivo}")
+            st.write(f"Aba utilizada: {aba_usada}")
+            st.write(f"Abas disponíveis no arquivo: {', '.join(excel.sheet_names)}")
+            st.write(f"BP atualizado vem da coluna: {col_bp}")
+            st.write(f"Fcx Real vem da coluna: {col_fcx}")
+            st.dataframe(diagnostico, hide_index=True, use_container_width=True)
+
+        df_tabela = df_set[df_set[col_macro].isin(ordem_macro)].copy()
+
+        resumo = (
+            df_tabela.groupby(col_macro)
+            .agg(
+                qtd=(col_macro, "size"),
+                bp_bruto=(col_bp, "sum"),
+                fcx_bruto=(col_fcx, "sum")
+            )
+            .reindex(ordem_macro, fill_value=0)
+            .reset_index()
+        )
+
+        resumo["Baixa provisória e encerrados"] = resumo[col_macro].map(mapeamento)
+
+        resumo["BP atualizado"] = resumo["bp_bruto"] / 1_000_000
+        resumo["Fcx Real"] = resumo["fcx_bruto"] / 1_000_000
+
         resumo["Δ"] = resumo["BP atualizado"] - resumo["Fcx Real"]
-        resumo["%"] = (resumo["Δ"] / resumo["BP atualizado"]) * 100
+        resumo["%"] = resumo.apply(
+            lambda row: (row["Δ"] / row["BP atualizado"]) * 100 if row["BP atualizado"] != 0 else 0,
+            axis=1
+        )
 
-        # 5. Organizar as colunas e ordenar conforme a imagem
-        # Ordem desejada: Casos Ganhos, Acordos, Perdidos
-        ordem = ["Casos ganhos*", "Acordos**", "Perdidos"]
-        resumo["ordem_aux"] = resumo["Baixa provisória e encerrados"].map({v: i for i, v in enumerate(ordem)})
-        resumo = resumo.sort_values("ordem_aux").drop(columns=["Macro encerramento", "Soma_Valor_Lancamento", "Valor Pedido Objeto Corrigido", "ordem_aux"])
+        resumo = resumo[
+            ["qtd", "Baixa provisória e encerrados", "BP atualizado", "Fcx Real", "Δ", "%"]
+        ]
 
-        # 6. Linha de Total
         total_qtd = resumo["qtd"].sum()
         total_bp = resumo["BP atualizado"].sum()
         total_fcx = resumo["Fcx Real"].sum()
@@ -288,32 +346,28 @@ elif authentication_status:
 
         tabela_final = pd.concat([resumo, linha_total], ignore_index=True)
 
-        # =========================
-        # EXIBIÇÃO NO STREAMLIT
-        # =========================
-
         st.markdown("### Desembolso e Fluxo de Caixa")
-        
-        
 
-        # Formatação final para exibição
         df_display = tabela_final.copy()
-        
-        # Formata as colunas numéricas para 1 casa decimal e o % com símbolo
+
         for col in ["BP atualizado", "Fcx Real", "Δ"]:
-            df_display[col] = df_display[col].map("{:.1f}".format)
-        
-        df_display["%"] = df_display["%"].map("{:.0f}%".format)
+            df_display[col] = df_display[col].map(lambda x: f"{x:.1f}".replace(".", ","))
 
-        # Renomeia as colunas para o display
-        df_display.columns = ["", "Baixa provisória e encerrados", "BP atualizado", "Fcx Real", "Δ", "%"]
+        df_display["%"] = df_display["%"].map(lambda x: f"{x:.0f}%")
 
-        # Exibe a tabela sem o index do pandas
-        st.table(df_display)
+        colunas_novas = ["", "Baixa provisória e encerrados", "BP atualizado", "Fcx Real", "Δ", "%"]
+        df_display.columns = colunas_novas
 
-    # Chamar a função dentro do bloco 'Resolved' do seu app
+        st.dataframe(
+            df_display,
+            hide_index=True,
+            use_container_width=True,
+            column_config={
+                col: st.column_config.Column(alignment="center") for col in colunas_novas
+            }
+        )
+
     gerar_tabela_desembolso()
-
     # ===============================
     # GRÁFICO 1
     # ===============================
@@ -334,10 +388,106 @@ elif authentication_status:
     fig_bar.update_traces(textposition='outside')
 
     st.plotly_chart(fig_bar, use_container_width=True)
+    # =========================
+    # PROCESSAMENTO DA TABELA
+    # =========================
+
+    def gerar_tabela_new_claims():
+
+        # ==========================================
+        # AGRUPAMENTO DOS DADOS
+        # ==========================================
+
+        resumo = df_entradas.groupby("macro assunto").agg({
+            "valor pedido.1": "sum"
+        }).reset_index()
+
+        # Quantidade de claims
+        contagem = (
+            df_entradas.groupby("macro assunto")
+            .size()
+            .reset_index(name="New Claims 1M")
+        )
+
+        resumo = resumo.merge(contagem, on="macro assunto")
+
+        # Fcx em milhões
+        resumo["Fcx"] = resumo["valor pedido.1"] / 1_000_000
+
+        # ==========================================
+        # ORGANIZAÇÃO
+        # ==========================================
+
+        resumo = resumo.sort_values(
+            by="New Claims 1M",
+            ascending=False
+        )
+
+        resumo = resumo[[
+            "New Claims 1M",
+            "macro assunto",
+            "Fcx"
+        ]]
+
+        # ==========================================
+        # LINHA TOTAL
+        # ==========================================
+
+        linha_total = pd.DataFrame({
+            "New Claims 1M": [resumo["New Claims 1M"].sum()],
+            "macro assunto": ["Total"],
+            "Fcx": [resumo["Fcx"].sum()]
+        })
+
+        tabela_final = pd.concat(
+            [resumo, linha_total],
+            ignore_index=True
+        )
+
+        # ==========================================
+        # EXIBIÇÃO
+        # ==========================================
+
+        st.markdown("### New Claims")
+
+        df_display = tabela_final.copy()
+
+        # Formatação do Fcx
+        df_display["Fcx"] = (
+            df_display["Fcx"]
+            .map("{:.2f}".format)
+            .str.replace(".", ",")
+        )
+
+        # Renomeia colunas
+        df_display.columns = [
+            "Quantidade",
+            "macro assunto",
+            "Fcx"
+        ]
+
+        # Exibe usando o st.dataframe com configurações de coluna
+        st.dataframe(
+            df_display,
+            hide_index=True, # Tira aquela coluna de índice inútil da esquerda
+            use_container_width=True, # Faz a tabela ocupar toda a largura
+            column_config={
+                "Quantidade": st.column_config.Column(alignment="center"),
+                "macro assunto": st.column_config.Column(alignment="center"),
+                "Fcx": st.column_config.Column(alignment="center")
+            }
+        )
+
+    # ==========================================
+    # CHAMADA DA FUNÇÃO
+    # ==========================================
+
+    gerar_tabela_new_claims()
 
     # ===============================
     # GRÁFICO 2
     # ===============================
+    
     st.subheader("Encerrados vs Baixa Provisória")
 
     graf2 = (
@@ -347,81 +497,125 @@ elif authentication_status:
         .reset_index(name="quantidade")
     )
 
-    st.plotly_chart(
-        px.bar(
-            graf2,
-            x="status",
-            y="quantidade",
-            color="macro encerramento",
-            barmode="stack"
-        ),
-        use_container_width=True
+    fig = px.bar(
+        graf2,
+        x="status",
+        y="quantidade",
+        color="macro encerramento",
+        barmode="stack",
+        text_auto=True 
     )
 
-    # ===============================
-    # GRÁFICO 3 (Ajustado)
-    # ===============================
+    fig.update_traces(
+        textfont_size=14,          
+        textangle=0,               
+        textposition="inside",     
+        insidetextanchor="middle"  
+    )
+
+    st.plotly_chart(fig, use_container_width=True)
+
+    import pandas as pd
+    import numpy as np
+    import plotly.express as px
+    import streamlit as st
+    import datetime
+
+    import pandas as pd
+    import numpy as np
+    import plotly.express as px
+    import streamlit as st
+    import datetime
+
     st.subheader("Entradas vs Encerrados (2026)")
 
-    # REMOVE DUPLICIDADE (CRÍTICO)
-    df_grafico = df.sort_values("Data Cálculo", ascending=False)
-    df_grafico = df_grafico.drop_duplicates(subset="Pasta", keep="first")
+    # =========================================================================
+    #CONFIGURAÇÕES MANUAIS 
+    # =========================================================================
 
-    # Entradas
-    entradas_2026 = (
-        df_grafico[df_grafico["Data de cadastro"].dt.year == 2026]
-        .dropna(subset=["Data de cadastro"])
-        .groupby(pd.Grouper(key="Data de cadastro", freq="MS"))
-        .size()
-        .reset_index(name="Entradas")
-        .rename(columns={"Data de cadastro": "Data"})
-    )
+    
+    DATA_ATUAL = pd.to_datetime("2026-05-26") #ALTERE AQUI
 
-    # Encerrados
-    encerrados_2026 = (
-        df_grafico[df_grafico["Data de Encerramento"].dt.year == 2026]
-        .dropna(subset=["Data de Encerramento"])
-        .groupby(pd.Grouper(key="Data de Encerramento", freq="MS"))
-        .size()
-        .reset_index(name="Encerrados")
-        .rename(columns={"Data de Encerramento": "Data"})
-    )
+    
+    historico_manual = {
+        1: {"entradas": 32, "encerrados": 82},
+        2: {"entradas": 49, "encerrados": 149},
+        3: {"entradas": 45, "encerrados": 68},
+        4: {"entradas": 13, "encerrados": 115},
+        5: {"entradas": 22, "encerrados": 59},
 
-    # Merge
-    graf3 = pd.merge(entradas_2026, encerrados_2026, on="Data", how="outer")
-    graf3["Entradas"] = graf3["Entradas"].fillna(0)
-    graf3["Encerrados"] = graf3["Encerrados"].fillna(0)
+    }
 
-    # Meses completos
+    
+    if DATA_ATUAL.day >= 26:
+        data_fiscal_atual = DATA_ATUAL + pd.DateOffset(months=1)
+    else:
+        data_fiscal_atual = DATA_ATUAL
+
+    mes_atual_fiscal = data_fiscal_atual.month
+
+    
+    @st.cache_data(ttl=3600) 
+    def carregar_contagem_atual():
+        try:
+            df_entradas = pd.read_excel("ENTRADAS.xlsx")
+            df_settled = pd.read_excel("SETTLED_MENSAL.xlsx")
+            
+            # Conta a quantidade de linhas de cada base
+            return len(df_entradas), len(df_settled)
+        except Exception as e:
+            st.warning(f"Aviso: Não foi possível ler as bases do mês atual. ({e})")
+            return 0, 0
+
+    qtd_entradas_atual, qtd_encerrados_atual = carregar_contagem_atual()
+
+    
     meses_2026 = pd.date_range("2026-01-01", "2026-12-31", freq="MS")
+    dados_grafico = []
 
-    graf3 = (
-        graf3
-        .set_index("Data")
-        .reindex(meses_2026, fill_value=0)
-        .reset_index()
-        .rename(columns={"index": "Data"})
-    )
+    for data_mes in meses_2026:
+        m = data_mes.month
+        
+        # MESES FUTUROS (Maiores que o mês fiscal atual) -> Zerados
+        if m > mes_atual_fiscal:
+            entradas = 0
+            encerrados = 0
+            
+        # MÊS ATUAL FISCAL -> Puxa a contagem de linhas dos arquivos
+        elif m == mes_atual_fiscal:
+            entradas = qtd_entradas_atual
+            encerrados = qtd_encerrados_atual
+            
+        # MESES PASSADOS -> Puxa do dicionário 'historico_manual'
+        else:
+            entradas = historico_manual.get(m, {}).get("entradas", 0)
+            encerrados = historico_manual.get(m, {}).get("encerrados", 0)
+            
+        dados_grafico.append({
+            "Data": data_mes,
+            "Entradas": entradas,
+            "Encerrados": encerrados
+        })
 
-    # --- MODIFICAÇÕES AQUI ---
+    df_grafico = pd.DataFrame(dados_grafico)
 
-    # 1. Adicionamos 'text' para exibir os números sobre os pontos
+    # =========================================================================
+    #GERAÇÃO DO GRÁFICO
+    # =========================================================================
     fig_temporal = px.line(
-        graf3, 
+        df_grafico, 
         x="Data", 
         y=["Entradas", "Encerrados"], 
         markers=True,
-        text="value" # Exibe o valor de cada ponto
+        text="value"
     )
 
-    # 2. Configura o Eixo X para mostrar todos os meses (M1)
     fig_temporal.update_xaxes(
         dtick="M1", 
-        tickformat="%b/%y", # Formato: Jan/26
+        tickformat="%b/%y", 
         tickmode="linear"
     )
 
-    # 3. Ajusta a posição do texto para não ficar em cima da linha
     fig_temporal.update_traces(textposition="top center")
 
     st.plotly_chart(fig_temporal, use_container_width=True)
